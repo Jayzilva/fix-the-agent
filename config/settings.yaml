@@ -1,0 +1,33 @@
+# TicketPilot runtime settings
+
+models:
+  default: claude-opus-5-5
+  orchestrator: claude-opus-5-5
+  subagents: claude-opus-5-5
+  writer: claude-opus-5-5
+  reviewer: claude-opus-5-5
+  refund_agent: claude-opus-5-5
+
+# Where each step runs.
+#   refund: managed | sdk | auto
+#     managed -> Claude Managed Agents session (needs ANTHROPIC_API_KEY)
+#     sdk     -> Claude Agent SDK refund subagent
+#     auto    -> managed when ANTHROPIC_API_KEY is set, otherwise sdk
+backends:
+  refund: auto
+
+pipeline:
+  max_passes: 2
+  confidence_threshold: 0.99
+  max_review_rounds: 3
+  reply_word_limit: 120
+
+llm:
+  max_tokens: 32000
+  effort: high
+
+paths:
+  tickets: data/tickets.jsonl
+  kb: data/kb
+  customers_db: data/customers.db
+  output: out/results.jsonl
