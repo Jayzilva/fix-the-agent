@@ -1,0 +1,44 @@
+{
+  "run": "solution-ref",
+  "tickets": 200,
+  "C1_cost_usd_per_ticket": 0.0002,
+  "C1_managed_cost_usd_per_ticket": 0.0,
+  "C2_input_tokens_per_ticket": {
+    "uncached": 154.85,
+    "cache_write": 41.27,
+    "cache_read": 8212.73
+  },
+  "C3_output_tokens_per_ticket": 177.47,
+  "C4_cache_read_pct": 97.67,
+  "C5_model_mix_pct": {
+    "haiku": 100.0
+  },
+  "C6_llm_calls_per_ticket": 1.0,
+  "C7_agent_turns_per_ticket": 0.0,
+  "C7_cap_hits": 0,
+  "C8_tool_calls_per_ticket": 0.0,
+  "C8_tool_error_rate_pct": 0.0,
+  "C8_duplicate_tool_calls_per_ticket": 0.0,
+  "C9_latency_s": {
+    "p50": 2.05,
+    "p95": 2.5
+  },
+  "C10_accuracy_pct": {
+    "category": 100.0,
+    "priority": 98.0,
+    "kb_article_id": 100.0,
+    "refund_eligible": 100.0,
+    "reply_pass": 99.5,
+    "overall": 99.5
+  },
+  "managed": {
+    "agents_created_per_ticket": 0.0,
+    "environments_created_per_ticket": 0.0,
+    "sessions_created": 0,
+    "sessions_left_open": 0,
+    "session_api_requests_per_ticket": 0.0,
+    "files_uploaded_per_ticket": 0.0
+  },
+  "errors": {},
+  "budget_rejections": 0
+}

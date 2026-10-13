@@ -1,0 +1,217 @@
+# Planted defect catalog. Anchors are regexes resolved to file:line by build_answer_key.py.
+# The participant code carries no markers; this file is the only map.
+defects:
+  - id: A1
+    title: 'Opus-tier model for every step, including classification and JSON fixing'
+    anchors: [["config/settings.yaml", "default: claude-opus-5-5"], ["app/llm.py", "^MODEL = "], ["app/orchestrator.py", "SETTINGS\\[\"models\"\\]\\[\"subagents\"\\]"]]
+    observe: '100% Opus model mix in proxy log.'
+    fix: 'Haiku 5.5 (low effort) for category/priority/KB pick, Sonnet 5.5 or Haiku for the reply, no model for deterministic steps.'
+    hits: [C1, C5]
+  - id: A2
+    title: 'System prompt starts with a random request ID and datetime.now(), so the prefix never repeats'
+    anchors: [["app/llm.py", "Request ID: \\{uuid.uuid4\\(\\)\\}"], ["app/llm.py", "Current time: \\{datetime.now"]]
+    observe: 'cache_read_input_tokens = 0 on every Messages call.'
+    fix: 'Remove them or move dynamic values after the cached prefix (end of user turn).'
+    hits: [C2, C4]
+  - id: A3
+    title: 'Whole KB (60 articles) pasted into every Messages system prompt, no cache_control'
+    anchors: [["app/llm.py", "\\+ full_kb_text\\(\\)"], ["app/llm.py", "system=system_prompt\\(\\)"]]
+    observe: '~60k uncached input tokens on every call, even count_words.'
+    fix: 'Retrieve top-k snippets only where needed; cache the static prefix with cache_control.'
+    hits: [C1, C2, C4]
+  - id: A4
+    title: 'max_tokens=32000 and prompts demand 800+ words of reasoning before the answer'
+    anchors: [["config/settings.yaml", "max_tokens: 32000"], ["app/prompts/writer.md", "at least 800 words"], ["app/prompts/reviewer.md", "at least 800 words"], ["app/prompts/subagent_task.md", "explain your reasoning in detail"]]
+    observe: 'Large output tokens per call; answer buried at the end.'
+    fix: 'Ask for JSON/answer only; per-step max_tokens caps.'
+    hits: [C3, C9]
+  - id: A5
+    title: 'Adaptive thinking at high effort on every call, including trivial ones (word count, date math, JSON fix)'
+    anchors: [["app/llm.py", "thinking=\\{\"type\": \"adaptive\"\\}"], ["config/settings.yaml", "effort: high"], ["app/orchestrator.py", "effort=\"high\""]]
+    observe: 'Thinking tokens dominate output_tokens.'
+    fix: 'Low effort / Haiku for simple steps; thinking only where it helps. (Opus 5.5 cannot disable thinking - use effort low or a different model.)'
+    hits: [C3]
+  - id: A6
+    title: 'Free-text output followed by a second "fix my JSON" model call every time'
+    anchors: [["app/llm.py", "fixed = ask\\(load_prompt\\(\"fix_json.md\"\\)"], ["app/tools/util_tools.py", "llm.ask_json, f\"Convert this into a valid JSON"]]
+    observe: '2x calls per JSON step.'
+    fix: 'Structured outputs (output_config.format json_schema) or strict tool schema; parse once.'
+    hits: [C6]
+  - id: A7
+    title: 'Model used for deterministic work - word counting, date math, KB ID lookup'
+    anchors: [["app/llm.py", "^def count_words"], ["app/llm.py", "^def days_between"], ["app/llm.py", "^def lookup_article_id"], ["app/tools/util_tools.py", "llm.count_words"], ["app/tools/util_tools.py", "llm.days_between"]]
+    observe: 'Extra calls with tiny outputs and 60k-token prompts.'
+    fix: 'len(text.split()), date subtraction, regex/dict lookup in Python.'
+    hits: [C6, C1]
+  - id: A8
+    title: 'Retry wrapper retries every exception (incl. 400/403) 5x with no backoff and re-runs the whole ticket'
+    anchors: [["app/pipeline.py", "^def retry"], ["app/pipeline.py", "for _ in range\\(5\\)"], ["app/pipeline.py", "^@retry"]]
+    observe: 'Bursts of identical requests after an error; whole pipeline replays.'
+    fix: 'Retry only 429/5xx/connection errors at call level with exponential backoff (or rely on SDK max_retries).'
+    hits: [C6, C9]
+  - id: A9
+    title: 'Tickets processed one at a time, synchronously; blocking sync calls inside async code'
+    anchors: [["run.py", "for ticket in tickets:"], ["app/orchestrator.py", "for field in FIELD_INSTRUCTIONS:"]]
+    observe: 'Wall-clock = sum of ticket latencies.'
+    fix: 'Bounded concurrency (asyncio.Semaphore) and/or Message Batches API for offline runs; AsyncAnthropic.'
+    hits: [C9]
+  - id: A10
+    title: 'Growing history of all previous tickets re-sent with every call and into every subagent prompt'
+    anchors: [["app/llm.py", "^HISTORY = \\[\\]"], ["app/llm.py", "messages = HISTORY \\+"], ["app/llm.py", "^def remember"], ["app/orchestrator.py", "lines \\+= \\[m\\[\"content\"\\] for m in llm.HISTORY\\]"]]
+    observe: 'Input tokens climb with ticket number.'
+    fix: 'Fresh context per ticket.'
+    hits: [C2]
+  - id: B1
+    title: 'No max_turns; prompt says keep working until 100% certain'
+    anchors: [["app/orchestrator.py", "^def agent_options"], ["app/prompts/agent_system.md", "Keep working until you are 100% certain"]]
+    observe: 'Long agent runs, turn-cap hits / judge timeouts.'
+    fix: 'Set max_turns; define a clear done condition.'
+    hits: [C7]
+  - id: B2
+    title: 'All 14 tools from 3 MCP servers given to every subagent and the supervisor'
+    anchors: [["app/orchestrator.py", "mcp_servers=build_mcp_servers\\(\\)"], ["app/orchestrator.py", "allowed_tools=ALL_TOOL_NAMES"], ["app/tools/__init__.py", "^def build_mcp_servers"]]
+    observe: 'Thousands of tool-definition tokens per turn; irrelevant tool use.'
+    fix: 'Give each agent only the tools it needs (or none).'
+    hits: [C2, C8]
+  - id: B3
+    title: 'One subagent per output field (5 per ticket), each with the full parent context'
+    anchors: [["app/orchestrator.py", "^FIELD_INSTRUCTIONS"], ["app/orchestrator.py", "^async def run_field_agents"], ["app/orchestrator.py", "prompt = parent_context\\(ticket\\)"]]
+    observe: '5x context duplication; 5 separate SDK sessions per pass.'
+    fix: 'One call/agent for the whole ticket with lean prompt; or deterministic steps outside the model.'
+    hits: [C2, C6]
+  - id: B4
+    title: 'Prompt says always verify every fact by calling a tool again'
+    anchors: [["app/prompts/agent_system.md", "Always verify every fact by calling a tool again, even if"]]
+    observe: 'Duplicate identical tool calls.'
+    fix: 'Remove; trust tool results.'
+    hits: [C8]
+  - id: B5
+    title: 'Long-lived supervisor ClaudeSDKClient session never reset between tickets'
+    anchors: [["app/orchestrator.py", "^_supervisor = None"], ["app/orchestrator.py", "_supervisor = ClaudeSDKClient"]]
+    observe: 'Supervisor context grows ticket after ticket.'
+    fix: 'New session per ticket (or drop the supervisor).'
+    hits: [C2]
+  - id: B6
+    title: 'Verbose ~2k-word system prompt with rules repeated three times and long examples'
+    anchors: [["app/prompts/agent_system.md", "^## CRITICAL REMINDERS \\(read carefully\\)"], ["app/prompts/agent_system.md", "^## FINAL CRITICAL REMINDERS"]]
+    observe: 'Large fixed input per turn.'
+    fix: 'Trim to the rules once, cache it.'
+    hits: [C2]
+  - id: M1
+    title: 'New Managed Agent and new environment created for every refund check'
+    anchors: [["app/managed.py", "environment = client.beta.environments.create"], ["app/managed.py", "agent = client.beta.agents.create"]]
+    observe: 'Hundreds of agents/environments in Console; create latency per ticket.'
+    fix: 'Create once (setup script / ant apply), reuse IDs.'
+    hits: [C9, C1]
+  - id: M2
+    title: 'Sessions never deleted/archived after the ticket'
+    anchors: [["app/managed.py", "raise TimeoutError"]]
+    observe: 'Sessions left idle; containers and storage retained.'
+    fix: 'Delete or archive the session (after status settles) in a finally block.'
+    hits: [C1]
+  - id: M3
+    title: 'Tight polling loop (retrieve + full events.list every 100ms) instead of streaming'
+    anchors: [["app/managed.py", "while time.time\\(\\) < deadline"], ["app/managed.py", "client.beta.sessions.retrieve\\(session.id\\)"], ["app/managed.py", "time.sleep\\(0.1\\)"]]
+    observe: 'Hundreds of session API requests per ticket.'
+    fix: 'sessions.events.stream() (stream-first), break on idle with non-requires_action stop_reason.'
+    hits: [C9]
+  - id: M4
+    title: 'Whole KB (60 files) + DB uploaded to Files API for every session'
+    anchors: [["app/managed.py", "for path in sorted\\(KB_DIR.glob"], ["app/managed.py", "db = _upload"]]
+    observe: '61 uploads per ticket; uploaded files accumulate.'
+    fix: 'Upload once and reuse file IDs (or don''t mount the KB at all - the refund check doesn''t need it).'
+    hits: [C2, C9]
+  - id: M5
+    title: 'Refund decision run as a Managed Agents session though it is one SQL query + date subtraction'
+    anchors: [["app/pipeline.py", "managed.check_refund"], ["config/settings.yaml", "refund: auto"]]
+    observe: 'Session overhead (create, provision, poll) for a trivial task.'
+    fix: 'Plain Python function (the logic already exists in crm_tools.check_refund minus the flakiness).'
+    hits: [C1, C6]
+  - id: T1
+    title: 'Three overlapping KB tools (search_kb, find_article, lookup_docs) with vague descriptions'
+    anchors: [["app/tools/kb_tools.py", "@tool\\(\"search_kb\""], ["app/tools/kb_tools.py", "@tool\\(\"find_article\""], ["app/tools/kb_tools.py", "@tool\\(\"lookup_docs\""]]
+    observe: 'Wrong tool picked, then retried with another.'
+    fix: 'One search tool with a precise description and parameters.'
+    hits: [C8]
+  - id: T2
+    title: 'get_customer ignores customer_id and returns the full customers table'
+    anchors: [["app/tools/crm_tools.py", "^async def get_customer"]]
+    observe: 'Tool results of ~80k tokens.'
+    fix: 'WHERE id = ?; return only needed fields.'
+    hits: [C2, C8]
+  - id: T3
+    title: 'search_kb returns full HTML pages of the top 5 articles, not snippets'
+    anchors: [["app/tools/kb_tools.py", "to_html\\(a\\[\"body\"\\]\\) for a in hits"]]
+    observe: 'Large tool results.'
+    fix: 'Return top-3 IDs + titles + short snippets.'
+    hits: [C2]
+  - id: T4
+    title: 'check_refund fails randomly 30% of the time and returns bare "Error" without is_error'
+    anchors: [["app/tools/crm_tools.py", "^random.seed\\(42\\)"], ["app/tools/crm_tools.py", "if random.random\\(\\) < 0.3"]]
+    observe: 'Model retries the same call; tool error rate ~30%.'
+    fix: 'Remove flakiness; return clear errors with is_error: true.'
+    hits: [C8]
+  - id: T5
+    title: 'Tool input schemas have no types and no required fields'
+    anchors: [["app/tools/crm_tools.py", "\"properties\": \\{\"customer_id\": \\{\\}\\}"], ["app/tools/kb_tools.py", "\"properties\": \\{\"query\": \\{\\}\\}"]]
+    observe: 'Malformed calls and validation round-trips.'
+    fix: 'Typed JSON schema with required + additionalProperties false.'
+    hits: [C8]
+  - id: L1
+    title: 'Reviewer silently requires the phrase "We value you"; writer is never told'
+    anchors: [["app/prompts/reviewer.md", "We value you"], ["app/llm.py", "^def review_loop"]]
+    observe: 'Writer/reviewer ping-pong until max_review_rounds.'
+    fix: 'Give the writer the rubric (or drop the hidden rule); one review pass max, or none.'
+    hits: [C6, C7]
+  - id: L2
+    title: 'Whole pipeline re-run when supervisor confidence < 0.99 (rarely reported)'
+    anchors: [["config/settings.yaml", "confidence_threshold: 0.99"], ["app/pipeline.py", "for _ in range\\(SETTINGS\\[\"pipeline\"\\]\\[\"max_passes\"\\]\\)"]]
+    observe: 'Each ticket processed 2-3 times.'
+    fix: 'Remove the supervisor loop or use a sane threshold and retry only the failed step.'
+    hits: [C6, C1]
+  - id: L3
+    title: 'Self-reflection after every tool result'
+    anchors: [["app/prompts/agent_system.md", "After every tool result, stop and reflect"]]
+    observe: 'Extra turns/output with no new information.'
+    fix: 'Remove.'
+    hits: [C7]
+  - id: O1
+    title: 'No tracing or logging; response.usage discarded'
+    anchors: [["app/llm.py", "return \"\".join\\(block.text for block in response.content"], ["app/orchestrator.py", "result_text = message.result"]]
+    observe: 'Nothing - that''s the point.'
+    fix: 'OpenTelemetry GenAI spans / Langfuse / LangSmith; log usage, cost, ResultMessage.total_cost_usd per step.'
+    hits: [All]
+  - id: O2
+    title: 'Bare except/pass around calls'
+    anchors: [["app/llm.py", "^        except:"], ["app/pipeline.py", "^    except:"], ["run.py", "^            except:"]]
+    observe: 'Silent failures (missing results, swallowed managed errors).'
+    fix: 'Catch specific errors, log and surface them.'
+    hits: [C8]
+  - id: O3
+    title: 'No request metadata or ticket/step tagging; new client per call'
+    anchors: [["app/llm.py", "client = make_client\\(\\)"], ["app/managed.py", "client = make_client\\(\\)"]]
+    observe: 'Cost cannot be attributed per ticket or step.'
+    fix: 'Tag calls (metadata, session titles, span attributes) with ticket and step IDs; reuse one client.'
+    hits: [C1]
+  - id: O4
+    title: 'No app-level budget or spend alert (max_budget_usd, session budget unused)'
+    anchors: [["app/orchestrator.py", "return ClaudeAgentOptions\\("], ["app/managed.py", "session = client.beta.sessions.create"]]
+    observe: 'Runaway cost goes unnoticed.'
+    fix: 'Per-run USD/token budget with hard stop (ClaudeAgentOptions.max_budget_usd, Managed session budget, own counter).'
+    hits: [C1]
+bonus:
+  - id: X1
+    title: 'Refund decided twice - SDK refund subagent answer is thrown away when the managed backend runs'
+    anchors: [["app/pipeline.py", "result\\[\"refund_eligible\"\\] = await asyncio.to_thread"]]
+  - id: X2
+    title: 'Reply drafted twice - reply subagent draft, then writer rewrites it after the first review'
+    anchors: [["app/orchestrator.py", "\"reply_draft\": \"Draft the reply"], ["app/llm.py", "draft = write_reply"]]
+  - id: X3
+    title: 'KB re-read from disk on every system prompt build and every tool call'
+    anchors: [["app/kb.py", "^def load_articles"]]
+  - id: X4
+    title: 'MCP servers rebuilt for every subagent; MAX_MCP_OUTPUT_TOKENS raised to let 80k-token tool results through'
+    anchors: [["app/orchestrator.py", "MAX_MCP_OUTPUT_TOKENS"]]
+  - id: X5
+    title: 'Specialist answers merged by another Opus call + JSON fix instead of parsing FINAL ANSWER lines'
+    anchors: [["app/pipeline.py", "^def merge_answers"]]

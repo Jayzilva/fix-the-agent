@@ -1,0 +1,142 @@
+# Evaluation signals per catalog defect (organizer only).
+#
+# Static scan (static_scan.py):
+#   anchors   - come from organizer/defects.yaml: regexes that match the BROKEN starter code.
+#               Still matching in a team repo => the defect is probably still there.
+#   fixed     - regexes that indicate a fix, searched in *.py / *.md / *.yaml of the team repo
+#               (excluding data/, organizer/, tests/). Any hit is evidence of a fix.
+#   gone_ok   - true when "anchor gone" alone is enough to call it fixed (code was deleted).
+#   broken    - optional [file, regex] bug signatures that replace the defects.yaml anchors when
+#               those anchors only locate code (e.g. `^def agent_options`) rather than the bug.
+#   missing   - optional {when, absent}: broken if `when` matches somewhere in the code and
+#               `absent` matches nowhere (e.g. sessions are created but never deleted).
+# Write-up check (writeup_check.py):
+#   writeup   - keyword groups; a defect is a candidate credit when ALL groups match in one
+#               paragraph or table row (each group is a list of alternatives, case-insensitive).
+#
+# Calibrate after any edit:  python organizer/eval/static_scan.py --calibrate
+
+A1:
+  fixed: ['claude-haiku', 'claude-sonnet']
+  writeup: [['opus'], ['haiku', 'sonnet', 'cheaper model', 'smaller model', 'model mix', 'tier']]
+A2:
+  fixed: []
+  gone_ok: true
+  writeup: [['uuid', 'request id', 'datetime', 'timestamp', 'current time'], ['cache', 'prefix']]
+A3:
+  fixed: ['cache_control', 'kb_index', 'top.?k', 'retriev']
+  writeup: [['knowledge base', 'kb', '60 articles', 'whole kb', 'full kb'], ['system prompt', 'every call', 'cache', 'retriev', 'index']]
+A4:
+  fixed: []
+  gone_ok: true
+  writeup: [['800', 'max_tokens', 'verbose reasoning', 'reasoning before'], ['output', 'tokens', 'words']]
+A5:
+  fixed: ['effort.{0,20}low', 'thinking.{0,30}disabled', "effort: low"]
+  writeup: [['thinking', 'effort'], ['high', 'adaptive', 'every call', 'trivial', 'low']]
+A6:
+  fixed: ['json_schema', 'output_format', 'strict.{0,5}true', 'messages\.parse']
+  writeup: [['fix.?json', 'fix my json', 'second call', 'json repair', 'json fix'], ['structured output', 'json_schema', 'schema', 'call', 'parse']]
+A7:
+  fixed: ['len\(.{0,20}split\(\)\)', 'fromisoformat']
+  writeup: [['count_words', 'word count', 'days_between', 'date math', 'lookup_article_id', 'deterministic'], ['model', 'llm', 'python', 'call']]
+A8:
+  fixed: ['max_retries', 'RateLimitError', 'backoff']
+  writeup: [['retry', 'retries'], ['400', 'every exception', 'backoff', 'whole ticket', '5x', 'five']]
+A9:
+  fixed: ['Semaphore', 'gather\(', 'AsyncAnthropic', 'batches']
+  writeup: [['sequential', 'one at a time', 'concurren', 'parallel', 'async', 'batch'], ['ticket', 'latency', 'wall']]
+A10:
+  fixed: []
+  gone_ok: true
+  writeup: [['history', 'previous tickets', 'growing context', 'remember'], ['ticket', 'context', 'input tokens']]
+B1:
+  broken: [['app/prompts/agent_system.md', 'Keep working until you are 100% certain']]
+  missing: [{when: 'ClaudeAgentOptions\(|ClaudeSDKClient\(', absent: 'max_turns'}]
+  fixed: ['max_turns']
+  writeup: [['max_turns', 'turn cap', 'turn limit', '100% certain', 'keep working'], ['turn', 'agent', 'loop']]
+B2:
+  fixed: []
+  gone_ok: true
+  writeup: [['all tools', '14 tools', 'every tool', 'tool definitions', 'allowed_tools', 'all 14'], ['agent', 'subagent', 'token']]
+B3:
+  fixed: []
+  gone_ok: true
+  writeup: [['subagent per field', 'one subagent per', 'five subagents', '5 subagents', 'per field', 'per output field'], ['context', 'duplicat', 'session', 'call']]
+B4:
+  fixed: []
+  gone_ok: true
+  writeup: [['verify every fact', 'call.{0,20}again', 'duplicate tool', 'verify'], ['tool', 'prompt']]
+B5:
+  fixed: []
+  gone_ok: true
+  writeup: [['supervisor'], ['session', 'context', 'never reset', 'grows', 'long-lived']]
+B6:
+  fixed: []
+  gone_ok: true
+  writeup: [['system prompt', 'agent_system', 'operating manual', 'reminders'], ['verbose', 'repeated', 'long', '2k', 'trim', 'bloat']]
+M1:
+  broken: [['app/managed.py', 'name=f"ticketpilot-(env|refund)-\{run_id\}"']]
+  fixed: ['TICKETPILOT_REFUND_AGENT_ID', 'agent_id', 'create once', 'reuse']
+  writeup: [['managed'], ['agent', 'environment'], ['every', 'per ticket', 'each', 'once', 'reuse']]
+M2:
+  broken: []
+  missing: [{when: 'sessions\.create\(', absent: 'sessions\.(delete|archive)\('}]
+  fixed: ['sessions\.delete', 'sessions\.archive']
+  writeup: [['session'], ['delete', 'archive', 'left open', 'clean']]
+M3:
+  broken: [['app/managed.py', 'time\.sleep\(0\.1\)'], ['app/managed.py', 'events\.list\(session']]
+  fixed: ['events\.stream']
+  writeup: [['poll', '100 ?ms', 'sleep\(0\.1\)', 'events\.list'], ['stream', 'session', 'request']]
+M4:
+  fixed: []
+  gone_ok: true
+  writeup: [['upload', 'files api'], ['kb', 'knowledge base', '60', '61', 'every session', 'per ticket']]
+M5:
+  broken: [['config/settings.yaml', 'refund: (auto|managed)']]
+  fixed: ['refund: python', 'def check_refund']
+  writeup: [['refund'], ['managed', 'session'], ['sql', 'python', 'deterministic', 'trivial', 'date']]
+T1:
+  fixed: []
+  gone_ok: true
+  writeup: [['search_kb', 'find_article', 'lookup_docs', 'overlapping', 'three kb tools', '3 kb tools'], ['tool']]
+T2:
+  fixed: ['WHERE c\.id = \?', 'WHERE id = \?']
+  writeup: [['get_customer', 'customers table', 'whole table', 'full table'], ['customer_id', 'ignore', 'all customers', 'token', 'where']]
+T3:
+  fixed: []
+  gone_ok: true
+  writeup: [['html', 'full article', 'full pages'], ['search', 'tool result', 'snippet']]
+T4:
+  fixed: ['is_error']
+  writeup: [['check_refund', 'refund tool'], ['random', 'flaky', '30%', 'fails', 'error']]
+T5:
+  fixed: ['"required"', "'required'", 'additionalProperties']
+  writeup: [['schema'], ['type', 'required', 'untyped', 'no types']]
+L1:
+  fixed: []
+  gone_ok: true
+  writeup: [['we value you', 'reviewer', 'hidden rule', 'hidden requirement', 'rubric'], ['writer', 'loop', 'ping', 'round', 'reject']]
+L2:
+  fixed: []
+  gone_ok: true
+  writeup: [['confidence', '0\.99', 'max_passes', 'second pass', 're-run', 'rerun'], ['supervisor', 'pipeline', 'pass', 'twice']]
+L3:
+  fixed: []
+  gone_ok: true
+  writeup: [['reflect', 'reflection'], ['tool', 'turn', 'prompt']]
+O1:
+  fixed: ['usage', 'telemetry', 'opentelemetry', 'langfuse', 'langsmith', 'span']
+  writeup: [['trac', 'telemetry', 'observab', 'logging', 'usage'], ['cost', 'token', 'step', 'ticket']]
+O2:
+  fixed: []
+  gone_ok: true
+  writeup: [['bare except', 'except:', 'except: pass', 'swallow', 'silent'], ['error', 'fail', 'exception']]
+O3:
+  broken: [['app/llm.py', 'client = make_client\(\)']]
+  fixed: ['metadata', 'contextvar', 'ticket_id']
+  writeup: [['tag', 'metadata', 'attribut', 'new client', 'client per call'], ['ticket', 'step', 'cost', 'client']]
+O4:
+  broken: []
+  missing: [{when: 'ClaudeAgentOptions\(|messages\.(create|stream)\(|sessions\.create\(', absent: 'budget'}]
+  fixed: ['max_budget_usd', 'budget']
+  writeup: [['budget', 'spend alert', 'spend limit', 'hard stop', 'cap'], ['usd', 'cost', 'spend', 'run', 'session']]
