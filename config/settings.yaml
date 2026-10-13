@@ -1,30 +1,56 @@
-# TicketPilot runtime settings
+# TicketPilot runtime settings (reference solution)
+#
+# Every cost lever lives here so a fix can be switched on/off and measured.
 
 models:
-  default: claude-opus-5-5
-  orchestrator: claude-opus-5-5
-  subagents: claude-opus-5-5
-  writer: claude-opus-5-5
-  reviewer: claude-opus-5-5
-  refund_agent: claude-opus-5-5
+  triage: claude-haiku-5-5        # category + priority + KB pick + reply, one call
+  sdk_agent: claude-haiku-5-5     # only used when backends.triage = sdk
+  refund_agent: claude-haiku-5-5  # only used when backends.refund = managed
 
 # Where each step runs.
-#   refund: managed | sdk | auto
-#     managed -> Claude Managed Agents session (needs ANTHROPIC_API_KEY)
-#     sdk     -> Claude Agent SDK refund subagent
-#     auto    -> managed when ANTHROPIC_API_KEY is set, otherwise sdk
+#   triage: messages | sdk
+#     messages -> one Messages API call with structured output (default, cheapest)
+#     sdk      -> one Claude Agent SDK agent per ticket with a single KB search tool
+#   refund: python | managed
+#     python   -> SQL query + date subtraction, no model (default)
+#     managed  -> one Claude Managed Agents session per ticket; agent, environment and
+#                 DB upload are created once per process and reused
 backends:
-  refund: auto
-
-pipeline:
-  max_passes: 2
-  confidence_threshold: 0.99
-  max_review_rounds: 3
-  reply_word_limit: 120
+  triage: messages
+  refund: python
 
 llm:
-  max_tokens: 32000
-  effort: high
+  max_tokens: 1024        # triage JSON + a 120-word reply fits easily
+  effort: low
+  thinking: disabled      # disabled | adaptive  (Haiku 5.5 accepts disabled at effort <= high)
+  cache_ttl: 5m           # 5m | 1h - TTL of the cached system prompt (rules + KB index)
+  max_retries: 3          # SDK retries 408/409/429/5xx/connection errors with backoff
+  timeout_s: 60
+
+sdk:
+  max_turns: 4
+  max_budget_usd: 0.05    # per agent run, enforced by the Agent SDK
+  effort: low
+
+managed:
+  session_budget_cents: 25   # hard cap per refund session (minor units, USD)
+  timeout_s: 300
+  delete_sessions: true      # delete (not just archive) finished sessions
+
+pipeline:
+  reply_word_limit: 120
+  reply_rewrite_attempts: 1  # one targeted rewrite if the reply is too long, then trim
+  concurrency: 8             # run.py: tickets in flight at once
+
+budget:
+  max_usd_per_run: 5.00      # hard stop for the whole process (0 = off)
+  max_usd_per_ticket: 0.10   # hard stop per ticket (0 = off)
+
+telemetry:
+  enabled: true
+  dir: out/telemetry         # <run_id>.jsonl per process: one JSON line per call / step span
+  otel: false                # also emit OpenTelemetry GenAI spans if opentelemetry is installed
+  prices: config/prices.yaml
 
 paths:
   tickets: data/tickets.jsonl

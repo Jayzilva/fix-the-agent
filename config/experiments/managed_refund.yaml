@@ -1,0 +1,3 @@
+# Refund on Managed Agents (needs ANTHROPIC_API_KEY).
+backends:
+  refund: managed

@@ -1,52 +1,66 @@
+"""Knowledge base access. Articles are parsed once per process and kept in memory."""
+import functools
 import re
 
 from app.config import KB_DIR
 
 
+def _section(text, heading):
+    match = re.search(rf"^## {heading}\n\n(.+?)(?=\n## |\Z)", text, re.S | re.M)
+    return match.group(1).strip() if match else ""
+
+
+@functools.lru_cache(maxsize=1)
 def load_articles():
     articles = []
     for path in sorted(KB_DIR.glob("*.md")):
         text = path.read_text(encoding="utf-8")
-        title = text.splitlines()[0].lstrip("# ").strip()
-        articles.append({"id": path.stem, "title": title, "body": text})
-    return articles
+        meta = re.search(r"Category: (\w+)", text)
+        articles.append({
+            "id": path.stem,
+            "title": text.splitlines()[0].lstrip("# ").strip(),
+            "category": meta.group(1) if meta else "",
+            "summary": _section(text, "Summary"),
+            "symptom": _section(text, "Symptoms").removeprefix("You may see this when ").rstrip("."),
+            "question": _section(text, "Common question").removeprefix("Customers often ask ").rstrip("."),
+            "body": text,
+        })
+    return tuple(articles)
 
 
-def full_kb_text():
-    return "\n\n---\n\n".join(a["body"] for a in load_articles())
+@functools.lru_cache(maxsize=1)
+def article_ids():
+    return frozenset(a["id"] for a in load_articles())
 
 
-def to_html(markdown):
-    html = []
-    for block in markdown.split("\n\n"):
-        block = block.strip()
-        if block.startswith("## "):
-            html.append(f"<h2>{block[3:]}</h2>")
-        elif block.startswith("# "):
-            html.append(f"<h1>{block[2:]}</h1>")
-        elif re.match(r"^\d+\. ", block):
-            items = "".join(f"<li>{line.split('. ', 1)[1]}</li>" for line in block.splitlines())
-            html.append(f"<ol>{items}</ol>")
-        else:
-            block = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", block)
-            html.append(f"<p>{block}</p>")
-    return (
-        "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Nimbus Help Center</title>"
-        "<link rel='stylesheet' href='https://help.nimbus.example/assets/main.css'></head>"
-        "<body><div class='container'><nav class='breadcrumbs'><a href='/'>Help Center</a></nav>"
-        f"<article class='kb-article'>{''.join(html)}</article>"
-        "<footer><p>Was this article helpful? <a href='#'>Yes</a> <a href='#'>No</a></p>"
-        "<p>&copy; 2026 Nimbus Cloud, Inc. All rights reserved.</p></footer></div></body></html>"
-    )
+def get_article(article_id):
+    for article in load_articles():
+        if article["id"] == article_id:
+            return article
+    return None
 
 
-def keyword_search(query, limit=60):
+@functools.lru_cache(maxsize=1)
+def kb_index():
+    """Compact index of every article: id, category, title, the issue it covers and its resolution.
+
+    About 6k tokens for 60 articles (vs ~65k for the full text). It is static, so it sits in the
+    cached system prompt and is billed at the cache-read rate after the first call.
+    """
+    lines = []
+    for a in load_articles():
+        issue = "; ".join(s for s in (a["symptom"], a["question"]) if s)
+        lines.append(f"{a['id']} [{a['category']}] {a['title']}\n  Covers: {issue}\n  Resolution: {a['summary']}")
+    return "\n".join(lines)
+
+
+def keyword_search(query, limit=3):
     words = [w for w in re.findall(r"[a-z0-9]+", (query or "").lower()) if len(w) > 2]
     scored = []
     for article in load_articles():
-        haystack = article["body"].lower()
+        haystack = " ".join((article["summary"], article["symptom"], article["question"])).lower()
         title = article["title"].lower()
-        score = sum(haystack.count(w) + 10 * title.count(w) for w in words)
+        score = sum(haystack.count(w) + 5 * title.count(w) for w in words)
         if score:
             scored.append((score, article))
     scored.sort(key=lambda pair: -pair[0])

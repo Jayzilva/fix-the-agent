@@ -1,41 +1,44 @@
+import time
+
 from claude_agent_sdk import tool
 
-from app.kb import keyword_search, load_articles, to_html
+from app import telemetry
+from app.kb import keyword_search
 
 
-def _text(value):
-    return {"content": [{"type": "text", "text": value}]}
+def _text(value, is_error=False):
+    result = {"content": [{"type": "text", "text": value}]}
+    if is_error:
+        result["is_error"] = True
+    return result
 
 
-@tool("search_kb", "Search for stuff in the docs.", {"type": "object", "properties": {"query": {}}})
+@tool(
+    "search_kb",
+    "Search the Nimbus Cloud knowledge base. Returns up to 3 matching articles as "
+    "'KB-###: title' plus the issue each covers and its resolution. Use short keyword queries "
+    "describing the customer's problem, e.g. 'build timeout deploy'.",
+    {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "Keywords describing the issue"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    },
+)
 async def search_kb(args):
-    hits = keyword_search(args.get("query"), limit=5)
-    return _text("\n\n".join(to_html(a["body"]) for a in hits) or "No results")
+    started = time.perf_counter()
+    query = str(args.get("query") or "").strip()
+    if not query:
+        telemetry.record_tool_call("search_kb", False, time.perf_counter() - started)
+        return _text("query must be a non-empty string", is_error=True)
+    hits = keyword_search(query, limit=3)
+    telemetry.record_tool_call("search_kb", True, time.perf_counter() - started)
+    if not hits:
+        return _text("No matching articles.")
+    return _text("\n".join(
+        f"{a['id']} [{a['category']}]: {a['title']}\n  Covers: {a['symptom'] or a['question']}\n  Resolution: {a['summary']}"
+        for a in hits
+    ))
 
 
-@tool("find_article", "Finds an article.", {"type": "object", "properties": {"query": {}}})
-async def find_article(args):
-    hits = keyword_search(args.get("query"), limit=10)
-    return _text("\n".join(f"{a['id']}: {a['title']}" for a in hits) or "No results")
-
-
-@tool("lookup_docs", "Look up documentation.", {"type": "object", "properties": {"q": {}}})
-async def lookup_docs(args):
-    hits = keyword_search(args.get("q"), limit=3)
-    return _text("\n\n---\n\n".join(a["body"] for a in hits) or "No results")
-
-
-@tool("get_article", "Gets an article.", {"type": "object", "properties": {"id": {}}})
-async def get_article(args):
-    for article in load_articles():
-        if article["id"] == str(args.get("id")).strip():
-            return _text(to_html(article["body"]))
-    return _text("Not found")
-
-
-@tool("list_articles", "Lists articles.", {"type": "object", "properties": {}})
-async def list_articles(args):
-    return _text("\n".join(f"{a['id']}: {a['title']}" for a in load_articles()))
-
-
-KB_TOOLS = [search_kb, find_article, lookup_docs, get_article, list_articles]
+KB_TOOLS = [search_kb]

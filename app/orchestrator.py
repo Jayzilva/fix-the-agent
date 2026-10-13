@@ -1,90 +1,63 @@
-"""Claude Agent SDK orchestration: one specialist subagent per output field plus a supervisor."""
+"""Claude Agent SDK backend (backends.triage = sdk): one lean agent per ticket.
+
+The default pipeline uses one Messages API call instead (app/llm.py), which is cheaper.
+This backend is kept for teams that want an agent: it gets a single KB search tool,
+a hard turn cap, an SDK-enforced USD budget and structured output.
+"""
 import json
-import re
+import time
 
-from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient, ResultMessage, query
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 
-from app import llm
+from app import telemetry
 from app.config import ROOT, SETTINGS, load_prompt
-from app.tools import ALL_TOOL_NAMES, build_mcp_servers
+from app.llm import TRIAGE_SCHEMA, ticket_message
+from app.tools import mcp_server, tool_names
 
-FIELD_INSTRUCTIONS = {
-    "category": "Decide the ticket category: billing, technical, account, feature_request or other.",
-    "priority": "Decide the ticket priority: P1, P2 or P3, following the priority rules exactly.",
-    "kb_article_id": "Find the single most relevant knowledge base article and give its ID (KB-###), "
-                     "or null for feature_request and other tickets.",
-    "reply_draft": "Draft the reply to the customer (at most 120 words).",
-    "refund_eligible": "Decide whether the customer is eligible for a refund under the refund policy "
-                       "as of the ticket date. Answer true or false.",
-}
-
-_supervisor = None
+SDK = SETTINGS["sdk"]
 
 
-def agent_options(model):
+def agent_options():
     return ClaudeAgentOptions(
-        model=model,
+        model=SETTINGS["models"]["sdk_agent"],
         system_prompt=load_prompt("agent_system.md"),
-        mcp_servers=build_mcp_servers(),
-        allowed_tools=ALL_TOOL_NAMES,
-        tools=[],
+        mcp_servers={"kb": mcp_server("kb")},
+        allowed_tools=tool_names("kb"),
+        tools=[],                    # no built-in Claude Code tools
         permission_mode="bypassPermissions",
-        effort="high",
+        max_turns=SDK["max_turns"],
+        max_budget_usd=SDK["max_budget_usd"],
+        effort=SDK["effort"],
+        output_format={"type": "json_schema", "schema": TRIAGE_SCHEMA},
         setting_sources=[],
         cwd=str(ROOT),
-        env={"MAX_MCP_OUTPUT_TOKENS": "150000"},
     )
 
 
-def parent_context(ticket):
-    lines = ["# Full context", "", "## Current ticket", json.dumps(ticket, indent=2), ""]
-    if llm.HISTORY:
-        lines += ["## Tickets already handled in this session"]
-        lines += [m["content"] for m in llm.HISTORY]
-    return "\n".join(lines)
-
-
-async def run_subagent(field, ticket):
-    prompt = parent_context(ticket) + "\n\n" + load_prompt("subagent_task.md").format(
-        field=field, instructions=FIELD_INSTRUCTIONS[field]
-    )
-    result_text = ""
-    async for message in query(prompt=prompt, options=agent_options(SETTINGS["models"]["subagents"])):
+async def triage(ticket, refund):
+    """Fresh session per ticket (no shared supervisor, no history)."""
+    telemetry.check_budget()
+    started = time.perf_counter()
+    result = None
+    tool_calls = 0
+    async for message in query(prompt=ticket_message(ticket, refund), options=agent_options()):
         if isinstance(message, ResultMessage):
-            result_text = message.result or ""
-    return result_text
-
-
-async def run_field_agents(ticket):
-    answers = {}
-    for field in FIELD_INSTRUCTIONS:
-        answers[field] = await run_subagent(field, ticket)
-    return answers
-
-
-def final_answer(text):
-    match = re.findall(r"FINAL ANSWER:\s*(.+)", text or "", re.S)
-    return match[-1].strip() if match else (text or "").strip()
-
-
-async def supervisor_confidence(ticket, result):
-    global _supervisor
-    if _supervisor is None:
-        _supervisor = ClaudeSDKClient(options=agent_options(SETTINGS["models"]["orchestrator"]))
-        await _supervisor.connect()
-    await _supervisor.query(
-        load_prompt("supervisor.md").format(ticket=json.dumps(ticket, indent=2), result=json.dumps(result, indent=2))
+            result = message
+        elif getattr(message, "content", None):
+            tool_calls += sum(1 for b in message.content if type(b).__name__ == "ToolUseBlock")
+    if result is None:
+        raise RuntimeError("agent produced no result")
+    telemetry.record_agent_run(
+        "agent_sdk", SETTINGS["models"]["sdk_agent"], cost_usd=result.total_cost_usd, usage=result.usage,
+        turns=result.num_turns, tool_calls=tool_calls, latency_s=time.perf_counter() - started,
+        extra={"session_id": result.session_id, "subtype": result.subtype},
     )
-    text = ""
-    async for message in _supervisor.receive_response():
-        if isinstance(message, ResultMessage):
-            text = message.result or ""
-    found = re.findall(r"CONFIDENCE:\s*([0-9.]+)", text)
-    return float(found[-1]) if found else 0.0
+    if result.is_error:
+        raise RuntimeError(f"agent run failed: {result.subtype} {result.errors}")
+    if result.structured_output:
+        return result.structured_output
+    return json.loads(result.result)
 
 
 async def close():
-    global _supervisor
-    if _supervisor is not None:
-        await _supervisor.disconnect()
-        _supervisor = None
+    """Nothing long-lived to close; kept so run.py does not care which backend ran."""

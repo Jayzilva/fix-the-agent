@@ -1,0 +1,3 @@
+# Sonnet for triage - compare quality/cost against the Haiku default.
+models:
+  triage: claude-sonnet-5-5

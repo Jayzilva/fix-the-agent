@@ -1,81 +1,44 @@
 import json
-import random
-import sqlite3
-from datetime import date
+import time
 
 from claude_agent_sdk import tool
 
-from app.config import DB_PATH
-
-random.seed(42)
-
-REFUND_WINDOWS = {"monthly": 14, "annual": 30}
+from app import telemetry
+from app.refund import check_refund as decide_refund
 
 
-def _text(value):
-    return {"content": [{"type": "text", "text": value}]}
+def _text(value, is_error=False):
+    result = {"content": [{"type": "text", "text": value}]}
+    if is_error:
+        result["is_error"] = True
+    return result
 
 
-def _rows(sql, params=()):
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    try:
-        return [dict(r) for r in con.execute(sql, params).fetchall()]
-    finally:
-        con.close()
-
-
-@tool("get_customer", "Get customer info.", {"type": "object", "properties": {"customer_id": {}}})
-async def get_customer(args):
-    rows = _rows(
-        "SELECT c.*, p.name AS plan_name, p.billing_period, p.price_usd "
-        "FROM customers c JOIN plans p ON p.id = c.plan_id"
-    )
-    return _text(json.dumps(rows))
-
-
-@tool("get_plan", "Get plan.", {"type": "object", "properties": {"plan_id": {}}})
-async def get_plan(args):
-    return _text(json.dumps(_rows("SELECT * FROM plans WHERE id = ?", (args.get("plan_id"),)), indent=2))
-
-
-@tool("get_charges", "Get charges.", {"type": "object", "properties": {"customer_id": {}}})
-async def get_charges(args):
-    rows = _rows(
-        "SELECT * FROM charges WHERE customer_id = ? ORDER BY charged_at DESC", (args.get("customer_id"),)
-    )
-    return _text(json.dumps(rows, indent=2))
-
-
-@tool("list_customers", "List customers.", {"type": "object", "properties": {}})
-async def list_customers(args):
-    return _text(json.dumps(_rows("SELECT id, name, email, company FROM customers"), indent=2))
-
-
-@tool("check_refund", "Check refund.", {"type": "object", "properties": {"customer_id": {}, "as_of": {}}})
+@tool(
+    "check_refund",
+    "Decide refund eligibility for one customer as of the ticket date. Returns plan, last successful "
+    "charge, days since that charge, the plan's refund window and the eligible flag.",
+    {
+        "type": "object",
+        "properties": {
+            "customer_id": {"type": "string", "pattern": r"^C\d{4}$"},
+            "as_of": {"type": "string", "format": "date", "description": "Ticket date, YYYY-MM-DD"},
+        },
+        "required": ["customer_id", "as_of"],
+        "additionalProperties": False,
+    },
+)
 async def check_refund(args):
-    if random.random() < 0.3:
-        return _text("Error")
-    customer = _rows(
-        "SELECT c.id, p.billing_period FROM customers c JOIN plans p ON p.id = c.plan_id WHERE c.id = ?",
-        (args.get("customer_id"),),
-    )
-    if not customer:
-        return _text("Error")
-    period = customer[0]["billing_period"]
-    charges = _rows(
-        "SELECT charged_at FROM charges WHERE customer_id = ? AND status = 'succeeded' AND charged_at <= ? "
-        "ORDER BY charged_at DESC LIMIT 1",
-        (args.get("customer_id"), args.get("as_of")),
-    )
-    window = REFUND_WINDOWS.get(period, 0)
-    plan = _rows("SELECT p.id FROM plans p JOIN customers c ON c.plan_id = p.id WHERE c.id = ?",
-                 (args.get("customer_id"),))[0]["id"]
-    if plan.startswith("enterprise") or not charges or not window:
-        return _text(json.dumps({"customer_id": args.get("customer_id"), "eligible": False}))
-    days = (date.fromisoformat(str(args.get("as_of"))) - date.fromisoformat(charges[0]["charged_at"])).days
-    return _text(json.dumps({"customer_id": args.get("customer_id"), "eligible": days <= window,
-                             "days_since_charge": days, "window_days": window}))
+    started = time.perf_counter()
+    try:
+        decision = decide_refund(args["customer_id"], args["as_of"])
+    except (KeyError, ValueError) as e:
+        telemetry.record_tool_call("check_refund", False, time.perf_counter() - started)
+        return _text(f"invalid input: {e}", is_error=True)
+    telemetry.record_tool_call("check_refund", decision.found, time.perf_counter() - started)
+    if not decision.found:
+        return _text(f"customer {args['customer_id']} not found", is_error=True)
+    return _text(json.dumps(decision.as_dict()))
 
 
-CRM_TOOLS = [get_customer, get_plan, get_charges, check_refund, list_customers]
+CRM_TOOLS = [check_refund]
