@@ -13,8 +13,8 @@ Replace it with `organizer/runs/baseline/report.json` once the dry run is done.
 | Metric | Before (starter, estimate) | After (measured, 200 tickets) |
 |---|---|---|
 | C1 cost per ticket | ~$8-14 | **$0.0002** |
-| C2 input tokens per ticket (uncached / write / read) | ~1M+, nearly all uncached | 168 / 41 / 8,192 |
-| C3 output tokens per ticket | tens of thousands (800-word reasoning + thinking) | 180 |
+| C2 input tokens per ticket (uncached / write / read) | ~1M+, nearly all uncached | 155 / 41 / 8,213 |
+| C3 output tokens per ticket | tens of thousands (800-word reasoning + thinking) | 177 |
 | C4 cache read share | 0% | **97.7%** |
 | C5 model mix | 100% Opus | 100% Haiku |
 | C6 LLM calls per ticket | ~30-60 (2 passes x ~14 Messages + SDK turns) | **1.0** |
@@ -75,7 +75,7 @@ the starter app.
 | A1 | Opus for every step | model mix 100% Opus | `models.triage: claude-haiku-5-5`; no model for refund, word count, KB lookup |
 | A2 | UUID + `datetime.now()` at top of system prompt | `cache_read_input_tokens` = 0 on every call | static system prompt; per-ticket data only in the user turn |
 | A3 | Whole KB (~65k tokens) in every system prompt, no cache | ~60k uncached input per call, even `count_words` | compact KB index (~6k tokens) with `cache_control`; 97.7% cache reads |
-| A4 | `max_tokens` 32000 + "800 words of reasoning" | huge output per call, answer buried | answer-only structured output, `max_tokens: 1024`; 180 output tokens per ticket |
+| A4 | `max_tokens` 32000 + "800 words of reasoning" | huge output per call, answer buried | answer-only structured output, `max_tokens: 1024`; 177 output tokens per ticket |
 | A5 | Adaptive thinking at high effort everywhere | thinking dominates output tokens | `effort: low`, `thinking: disabled` (configurable) |
 | A6 | Free text + second "fix my JSON" call | 2x calls per JSON step | `output_config.format` JSON schema, parsed once |
 | A7 | Model for word count, date math, KB id lookup | tiny-output calls with 60k prompts | `len(text.split())`, `date` subtraction, set lookup of KB ids |
